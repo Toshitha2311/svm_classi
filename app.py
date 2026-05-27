@@ -1,114 +1,172 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import os
+import joblib
 
-from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 
-st.set_page_config(page_title="SVM Classifier", layout="wide")
+import matplotlib.pyplot as plt
 
-st.title("🟢 SVM Classification Model (FORCED FIX)")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Decision Tree Regressor", layout="wide")
 
-# ----------------------------
-# DATA SOURCE
-# ----------------------------
-option = st.radio("Choose Dataset Source", ["Default (Iris)", "Upload CSV"])
+DATA_PATH = "data/dataset.csv"
+MODEL_PATH = "models/decision_tree_regressor.pkl"
 
-if option == "Default (Iris)":
-    iris = load_iris(as_frame=True)
-    df = iris.frame
+os.makedirs("data", exist_ok=True)
+os.makedirs("models", exist_ok=True)
+
+st.title("🌳 Decision Tree Regression Model")
+
+# ---------------- DEFAULT DATASET ----------------
+@st.cache_data
+def load_default_data():
+    from sklearn.datasets import fetch_california_housing
+
+    data = fetch_california_housing()
+
+    df = pd.DataFrame(data.data, columns=data.feature_names)
+    df["target"] = data.target
+
+    df.to_csv(DATA_PATH, index=False)
+
+    return df
+
+# ---------------- DATA SOURCE ----------------
+choice = st.radio("📌 Choose Dataset", ["Default Dataset", "Upload CSV"])
+
+df = None
+
+if choice == "Upload CSV":
+    file = st.file_uploader("Upload CSV file", type=["csv"])
+    if file:
+        df = pd.read_csv(file)
+        df.to_csv(DATA_PATH, index=False)
 else:
-    file = st.file_uploader("Upload CSV", type=["csv"])
-    if file is None:
-        st.stop()
-    df = pd.read_csv(file)
+    df = load_default_data()
 
-# ----------------------------
-# PREVIEW
-# ----------------------------
-st.subheader("Dataset Preview")
-st.dataframe(df.head())
+# ---------------- MAIN APP ----------------
+if df is not None:
 
-# ----------------------------
-# TARGET
-# ----------------------------
-target = st.selectbox("Select Target Column", df.columns)
+    st.subheader("📊 Dataset Preview")
+    st.dataframe(df.head())
 
-X = df.drop(columns=[target])
-y = df[target]
+    target_col = st.selectbox("🎯 Target Column", df.columns, index=len(df.columns)-1)
 
-# ----------------------------
-# 🔥 FORCE FIX TARGET (IMPORTANT)
-# ----------------------------
+    feature_cols = st.multiselect(
+        "📌 Feature Columns",
+        [c for c in df.columns if c != target_col],
+        default=[c for c in df.columns if c != target_col]
+    )
 
-# If numeric continuous → convert into classes using bins
-if y.dtype != "object" and y.nunique() > 10:
-    st.warning("⚠ Continuous target detected → converting into classification bins")
-    y = pd.qcut(y, q=3, labels=["Low", "Medium", "High"])
+    if feature_cols and target_col:
 
-# If still numeric but small unique values → keep as class
-y = y.astype(str)
+        X = df[feature_cols]
+        y = df[target_col]
 
-# ----------------------------
-# SPLIT
-# ----------------------------
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+        test_size = st.slider("🧪 Test Size", 0.1, 0.5, 0.2)
 
-# ----------------------------
-# SCALING
-# ----------------------------
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
+        max_depth = st.slider("🌳 Max Depth", 1, 20, 5)
 
-# ----------------------------
-# MODEL
-# ----------------------------
-model = SVC(kernel="rbf")
-model.fit(X_train, y_train)
+        if st.button("🚀 Train Model"):
 
-y_pred = model.predict(X_test)
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=42
+            )
 
-# ----------------------------
-# METRICS
-# ----------------------------
-acc = accuracy_score(y_test, y_pred)
+            model = DecisionTreeRegressor(
+                max_depth=max_depth,
+                random_state=42
+            )
 
-st.subheader("Model Performance")
-st.success(f"Accuracy: {acc:.2f}")
+            model.fit(X_train, y_train)
 
-st.text("Classification Report")
-st.text(classification_report(y_test, y_pred))
+            y_pred = model.predict(X_test)
 
-# ----------------------------
-# CONFUSION MATRIX
-# ----------------------------
-st.subheader("Confusion Matrix")
+            # ---------------- SAVE MODEL ----------------
+            joblib.dump(model, MODEL_PATH)
 
-cm = confusion_matrix(y_test, y_pred)
+            st.success("💾 Model saved successfully!")
 
-fig, ax = plt.subplots()
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-st.pyplot(fig)
+            # ---------------- METRICS ----------------
+            mse = mean_squared_error(y_test, y_pred)
+            r2 = r2_score(y_test, y_pred)
 
-# ----------------------------
-# PREDICTION
-# ----------------------------
-st.subheader("Make Prediction")
+            st.success(f"📉 MSE: {mse:.4f}")
+            st.success(f"📈 R² Score: {r2:.4f}")
 
-input_data = []
-for col in X.columns:
-    val = st.number_input(f"{col}", value=0.0)
-    input_data.append(val)
+            # ---------------- ACTUAL VS PREDICTED ----------------
+            st.subheader("📊 Actual vs Predicted")
 
-input_array = scaler.transform(np.array(input_data).reshape(1, -1))
-prediction = model.predict(input_array)
+            fig, ax = plt.subplots()
 
-st.success(f"Prediction: {prediction[0]}")
+            ax.scatter(y_test, y_pred)
+            ax.plot(
+                [y_test.min(), y_test.max()],
+                [y_test.min(), y_test.max()],
+                color="red"
+            )
+
+            ax.set_xlabel("Actual")
+            ax.set_ylabel("Predicted")
+
+            st.pyplot(fig)
+
+            # ---------------- RESIDUALS ----------------
+            st.subheader("📉 Residual Plot")
+
+            residuals = y_test - y_pred
+
+            fig2, ax2 = plt.subplots()
+
+            ax2.scatter(y_pred, residuals)
+            ax2.axhline(0, color="red")
+
+            ax2.set_xlabel("Predicted")
+            ax2.set_ylabel("Residuals")
+
+            st.pyplot(fig2)
+
+            # ---------------- FEATURE IMPORTANCE ----------------
+            st.subheader("📊 Feature Importance")
+
+            importance = model.feature_importances_
+
+            fig3, ax3 = plt.subplots()
+
+            ax3.barh(feature_cols, importance)
+            ax3.set_xlabel("Importance")
+
+            st.pyplot(fig3)
+
+            st.session_state["features"] = feature_cols
+
+    # ---------------- PREDICTION ----------------
+    if os.path.exists(MODEL_PATH):
+
+        st.sidebar.header("🔮 Prediction Panel")
+
+        model = joblib.load(MODEL_PATH)
+
+        features = st.session_state.get("features", [])
+
+        inputs = []
+
+        for col in features:
+            inputs.append(
+                st.sidebar.number_input(col, value=0.0)
+            )
+
+        if st.sidebar.button("Predict"):
+
+            input_data = np.array(inputs).reshape(1, -1)
+
+            prediction = model.predict(input_data)
+
+            st.sidebar.success(f"📈 Predicted Value: {prediction[0]:.4f}")
+
+else:
+    st.warning("📌 Please load dataset")
